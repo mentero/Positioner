@@ -17,7 +17,7 @@ defmodule Positioner do
         case changeset.action do
           :insert ->
             if position do
-              Positioner.insert_at(Dummy, scopes_with_values, field_name, position)
+              Positioner.insert_at(model_name, scopes_with_values, field_name, position)
               changeset
             else
               new_position = Positioner.position_for_new(model_name, scopes_with_values)
@@ -27,8 +27,18 @@ defmodule Positioner do
           :update ->
             id = fetch_field!(changeset, :id)
 
-            if position do
-              Positioner.update_to(model_name, scopes_with_values, field_name, position, id)
+            if Enum.any?(scopes, &get_change(changeset, &1)) do
+              old_scopes =
+                Enum.map(scopes, fn scope -> {scope, Map.get(changeset.data, scope)} end)
+
+              position = fetch_field!(changeset, field_name)
+
+              Positioner.insert_at(model_name, scopes_with_values, field_name, position)
+              Positioner.delete(model_name, old_scopes, field_name, id)
+            else
+              if position do
+                Positioner.update_to(model_name, scopes_with_values, field_name, position, id)
+              end
             end
 
             changeset

@@ -122,14 +122,44 @@ defmodule PositionerTest do
                Dummy |> select([:id, :title, :position]) |> order_by(asc: :position) |> Repo.all()
     end
 
-    @tag :skip
     test "scope changed" do
-      # TO BE IMPLEMENTED
+      %{id: tenant_id} = tenant = insert_tenant!()
+      %{id: another_tenant_id} = another_tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
+      %{id: d2} = subject = insert_dummy!(title: "2", position: 2, tenant: tenant)
+      %{id: d3} = insert_dummy!(title: "3", position: 3, tenant: tenant)
+
+      %{id: f1} = insert_dummy!(title: "1", position: 1, tenant: another_tenant)
+      %{id: f2} = insert_dummy!(title: "2", position: 2, tenant: another_tenant)
+      %{id: f3} = insert_dummy!(title: "3", position: 3, tenant: another_tenant)
+
+      assert %{id: ^d2, title: "subject", position: 2, tenant_id: ^another_tenant_id} =
+               subject
+               |> update_changeset(tenant, %{
+                 "title" => "subject",
+                 "position" => 2,
+                 "tenant_id" => another_tenant_id
+               })
+               |> Repo.update!()
+
+      assert [
+               %{id: ^d1, title: "1", position: 1, tenant_id: ^tenant_id},
+               %{id: ^d3, title: "3", position: 2, tenant_id: ^tenant_id},
+               %{id: ^f1, title: "1", position: 1, tenant_id: ^another_tenant_id},
+               %{id: ^d2, title: "subject", position: 2, tenant_id: ^another_tenant_id},
+               %{id: ^f2, title: "2", position: 3, tenant_id: ^another_tenant_id},
+               %{id: ^f3, title: "3", position: 4, tenant_id: ^another_tenant_id}
+             ] =
+               Dummy
+               |> select([:id, :title, :position, :tenant_id])
+               |> order_by(asc: :tenant_id, asc: :position)
+               |> Repo.all()
     end
 
     defp update_changeset(model, tenant, params) do
       model
-      |> cast(params, [:title, :position])
+      |> cast(params, [:title, :position, :tenant_id])
       |> Positioner.Changeset.set_order([:tenant_id])
     end
   end
