@@ -76,6 +76,71 @@ defmodule Positioner do
     :ok
   end
 
+  @spec update_to(Ecto.Schema.t(), keyword(), atom(), integer(), integer()) :: :ok
+  def update_to(schema_module, scopes \\ [], field_name \\ :position, position, id)
+      when is_atom(field_name) and is_integer(position) and is_integer(id) do
+    source = schema_module.__schema__(:source)
+
+    siblings_query =
+      schema_module
+      |> from(as: :source)
+      |> scope_query(scopes)
+      |> where([source: s], s.id != ^id)
+      |> select([source: s], [s.id, field(s, ^field_name), s.updated_at])
+
+    {siblings_query_string, siblings_params} = @repo.to_sql(:all, siblings_query)
+
+    params_offset = Enum.count(siblings_params)
+
+    sql = """
+      UPDATE #{source}
+      SET #{field_name} = ordering.expected_position
+      FROM (
+        SELECT "id", "position", row_number() OVER (ORDER BY #{field_name} ASC, "updated_at" DESC NULLS LAST) AS "expected_position"
+        FROM (
+          (#{siblings_query_string})
+          UNION
+          (SELECT $#{params_offset} as "id", $#{1 + params_offset} as "#{field_name}", NOW() as "updated_at")
+        ) AS collection
+      ) AS ordering(id, current_position, expected_position)
+      WHERE #{source}.id = ordering.id AND #{source}.id <> $#{params_offset} AND coalesce(ordering.current_position, 0) <> ordering.expected_position
+    """
+
+    SQL.query!(@repo, sql, siblings_params ++ [position])
+
+    :ok
+  end
+
+  def delete(schema_module, scopes \\ [], field_name \\ :position, id)
+      when is_atom(field_name) and is_integer(id) do
+    source = schema_module.__schema__(:source)
+
+    siblings_query =
+      schema_module
+      |> from(as: :source)
+      |> scope_query(scopes)
+      |> where([source: s], s.id != ^id)
+      |> select([source: s], [s.id, field(s, ^field_name), s.updated_at])
+
+    {siblings_query_string, siblings_params} = @repo.to_sql(:all, siblings_query)
+
+    params_offset = Enum.count(siblings_params)
+
+    sql = """
+      UPDATE #{source}
+      SET #{field_name} = ordering.expected_position
+      FROM (
+        SELECT "id", "position", row_number() OVER (ORDER BY #{field_name} ASC, "updated_at" DESC NULLS LAST) AS "expected_position"
+        FROM (#{siblings_query_string}) AS collection
+      ) AS ordering(id, current_position, expected_position)
+      WHERE #{source}.id = ordering.id AND #{source}.id <> $#{params_offset} AND coalesce(ordering.current_position, 0) <> ordering.expected_position
+    """
+
+    SQL.query!(@repo, sql, siblings_params)
+
+    :ok
+  end
+
   defp scope_query(query, scope) do
     {nil_clauses, non_nil_clauses} =
       Enum.split_with(scope, fn
