@@ -1,59 +1,6 @@
 defmodule Positioner do
   import Ecto.Query
   alias Ecto.Adapters.SQL
-
-  defmodule Changeset do
-    import Ecto.Changeset
-
-    def set_order(changeset, scopes \\ [], field_name \\ :position) do
-      prepare_changes(changeset, fn changeset ->
-        model_name = fetch_field!(changeset, :__struct__)
-
-        scopes_with_values =
-          Enum.map(scopes, fn scope -> {scope, fetch_field!(changeset, scope)} end)
-
-        position = get_change(changeset, field_name)
-
-        case changeset.action do
-          :insert ->
-            if position do
-              Positioner.insert_at(model_name, scopes_with_values, field_name, position)
-              changeset
-            else
-              new_position = Positioner.position_for_new(model_name, scopes_with_values)
-              changeset |> put_change(field_name, new_position)
-            end
-
-          :update ->
-            id = fetch_field!(changeset, :id)
-
-            if Enum.any?(scopes, &get_change(changeset, &1)) do
-              old_scopes =
-                Enum.map(scopes, fn scope -> {scope, Map.get(changeset.data, scope)} end)
-
-              position = fetch_field!(changeset, field_name)
-
-              Positioner.insert_at(model_name, scopes_with_values, field_name, position)
-              Positioner.delete(model_name, old_scopes, field_name, id)
-            else
-              if position do
-                Positioner.update_to(model_name, scopes_with_values, field_name, position, id)
-              end
-            end
-
-            changeset
-
-          :delete ->
-            id = fetch_field!(changeset, :id)
-
-            Positioner.delete(model_name, scopes_with_values, field_name, id)
-
-            changeset
-        end
-      end)
-    end
-  end
-
   @repo Positioner.Repo
 
   @spec position_for_new(Ecto.Schema.t(), keyword(), atom()) :: integer()
