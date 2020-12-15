@@ -73,22 +73,7 @@ defmodule PositionerTest do
       model
       |> cast(params, [:position])
       |> put_change(:tenant_id, tenant.id)
-      |> set_create_order()
-    end
-
-    defp set_create_order(changeset) do
-      prepare_changes(changeset, fn changeset ->
-        tenant_id = fetch_field!(changeset, :tenant_id)
-        position = fetch_field!(changeset, :position)
-
-        if position do
-          Positioner.insert_at(Dummy, [tenant_id: tenant_id], :position, position)
-          changeset
-        else
-          new_position = Positioner.position_for_new(Dummy, tenant_id: tenant_id)
-          changeset |> change(position: new_position)
-        end
-      end)
+      |> Positioner.Changeset.set_order([:tenant_id])
     end
   end
 
@@ -145,21 +130,7 @@ defmodule PositionerTest do
     defp update_changeset(model, tenant, params) do
       model
       |> cast(params, [:title, :position])
-      |> set_update_order()
-    end
-
-    defp set_update_order(changeset) do
-      prepare_changes(changeset, fn changeset ->
-        id = fetch_field!(changeset, :id)
-        tenant_id = fetch_field!(changeset, :tenant_id)
-        position = get_change(changeset, :position)
-
-        if position do
-          Positioner.update_to(Dummy, [tenant_id: tenant_id], :position, position, id)
-        end
-
-        changeset
-      end)
+      |> Positioner.Changeset.set_order([:tenant_id])
     end
   end
 
@@ -186,18 +157,7 @@ defmodule PositionerTest do
     end
 
     defp delete_changeset(model) do
-      model |> change() |> set_delete_order()
-    end
-
-    defp set_delete_order(changeset) do
-      prepare_changes(changeset, fn changeset ->
-        id = fetch_field!(changeset, :id)
-        tenant_id = fetch_field!(changeset, :tenant_id)
-
-        Positioner.delete(Dummy, [tenant_id: tenant_id], :position, id)
-
-        changeset
-      end)
+      model |> change() |> Positioner.Changeset.set_order([:tenant_id])
     end
   end
 end
