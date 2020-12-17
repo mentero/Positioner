@@ -73,7 +73,7 @@ defmodule PositionerTest do
       model
       |> cast(params, [:position])
       |> put_change(:tenant_id, tenant.id)
-      |> Positioner.Changeset.set_order([:tenant_id])
+      |> Positioner.Changeset.set_order(:position, [:tenant_id])
     end
   end
 
@@ -157,10 +157,10 @@ defmodule PositionerTest do
                |> Repo.all()
     end
 
-    defp update_changeset(model, tenant, params) do
+    defp update_changeset(model, _tenant, params) do
       model
       |> cast(params, [:title, :position, :tenant_id])
-      |> Positioner.Changeset.set_order([:tenant_id])
+      |> Positioner.Changeset.set_order(:position, [:tenant_id])
     end
   end
 
@@ -187,7 +187,60 @@ defmodule PositionerTest do
     end
 
     defp delete_changeset(model) do
-      model |> change() |> Positioner.Changeset.set_order([:tenant_id])
+      model |> change() |> Positioner.Changeset.set_order(:position, [:tenant_id])
+    end
+  end
+
+  describe "update_positions!" do
+    test "reorders records based on positions" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(position: 1, tenant: tenant)
+      %{id: d2} = insert_dummy!(position: 2, tenant: tenant)
+      %{id: d3} = insert_dummy!(position: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, tenant: tenant)
+
+      Positioner.update_positions!(Dummy, [tenant_id: tenant_id], :position, [d3, d4, d2, d1])
+
+      assert [
+               %{id: ^d3, position: 1},
+               %{id: ^d4, position: 2},
+               %{id: ^d2, position: 3},
+               %{id: ^d1, position: 4}
+             ] = Dummy |> select([:id, :position]) |> order_by(asc: :position) |> Repo.all()
+    end
+  end
+
+  describe "refresh_order!" do
+    test "reorders records to fill gaps and remove duplicated positions" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(position: 9, tenant: tenant)
+
+      %{id: d2} =
+        insert_dummy!(
+          position: 3,
+          tenant: tenant,
+          updated_at: ~N[2020-01-01 12:00:00]
+        )
+
+      %{id: d3} =
+        insert_dummy!(
+          position: 3,
+          tenant: tenant,
+          updated_at: ~N[2020-01-01 12:01:01]
+        )
+
+      %{id: d4} = insert_dummy!(position: 1, tenant: tenant)
+
+      Positioner.refresh_order!(Dummy, [tenant_id: tenant_id], :position)
+
+      assert [
+               %{id: ^d4, position: 1},
+               %{id: ^d3, position: 2},
+               %{id: ^d2, position: 3},
+               %{id: ^d1, position: 4}
+             ] = Dummy |> select([:id, :position]) |> order_by(asc: :position) |> Repo.all()
     end
   end
 end

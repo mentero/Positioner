@@ -1,10 +1,10 @@
 defmodule Positioner.Changeset do
   import Ecto.Changeset
 
-  def set_order(changeset, scopes \\ [], field_name \\ :position) do
+  def set_order(changeset, field_name \\ :position, scopes \\ []) do
     prepare_changes(changeset, fn changeset ->
       model_name = fetch_field!(changeset, :__struct__)
-      collection_scope_params = collection_scope(changeset, scopes)
+      collection_scope_params = collection_scope(changeset, List.wrap(scopes))
 
       case changeset.action do
         :insert -> on_insert(changeset, model_name, collection_scope_params, field_name)
@@ -25,7 +25,7 @@ defmodule Positioner.Changeset do
     end
   end
 
-  def on_update(changeset, model_name, collection_scope, scopes, field_name) do
+  defp on_update(changeset, model_name, collection_scope, scopes, field_name) do
     cond do
       scope_changed?(changeset, scopes) ->
         id = fetch_field!(changeset, :id)
@@ -41,13 +41,13 @@ defmodule Positioner.Changeset do
         Positioner.update_to(model_name, collection_scope, field_name, given_position, id)
 
       true ->
-        nil
+        :ok
     end
 
     changeset
   end
 
-  def on_delete(%{data: %{id: id}} = changeset, model_name, collection_scope, field_name) do
+  defp on_delete(%{data: %{id: id}} = changeset, model_name, collection_scope, field_name) do
     Positioner.delete(model_name, collection_scope, field_name, id)
     changeset
   end

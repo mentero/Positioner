@@ -21,4 +21,5 @@ config :positioner, Positioner.MigrationRepo,
   ownership_timeout: 300_000,
   timeout: 300_000
 
+config :positioner, repo: Positioner.Repo
 config :positioner, ecto_repos: [Positioner.Repo]

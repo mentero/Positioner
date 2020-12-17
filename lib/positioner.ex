@@ -1,7 +1,6 @@
 defmodule Positioner do
   import Ecto.Query
   alias Ecto.Adapters.SQL
-  @repo Positioner.Repo
 
   @spec position_for_new(Ecto.Schema.t(), keyword(), atom()) :: integer()
   def position_for_new(schema_module, scopes \\ [], field_name \\ :position) do
@@ -9,7 +8,7 @@ defmodule Positioner do
     |> from(as: :source)
     |> scope_query(scopes)
     |> select([source: s], max(field(s, ^field_name)))
-    |> @repo.one()
+    |> Positioner.Config.repo().one()
     |> case do
       nil -> 1
       highest_position -> highest_position + 1
@@ -52,7 +51,8 @@ defmodule Positioner do
       |> scope_query(scopes)
       |> select([source: s], [s.id, field(s, ^field_name), s.updated_at])
 
-    {siblings_query_string, siblings_params} = @repo.to_sql(:all, siblings_query)
+    {siblings_query_string, siblings_params} =
+      Positioner.Config.repo().to_sql(:all, siblings_query)
 
     params_offset = Enum.count(siblings_params)
 
@@ -70,7 +70,7 @@ defmodule Positioner do
       WHERE #{source}.id = ordering.id AND #{source}.id <> 0 AND coalesce(ordering.current_position, 0) <> ordering.expected_position
     """
 
-    SQL.query!(@repo, sql, siblings_params ++ [position])
+    SQL.query!(Positioner.Config.repo(), sql, siblings_params ++ [position])
 
     :ok
   end
@@ -87,7 +87,8 @@ defmodule Positioner do
       |> where([source: s], s.id != ^id)
       |> select([source: s], [s.id, field(s, ^field_name), s.updated_at])
 
-    {siblings_query_string, siblings_params} = @repo.to_sql(:all, siblings_query)
+    {siblings_query_string, siblings_params} =
+      Positioner.Config.repo().to_sql(:all, siblings_query)
 
     params_offset = Enum.count(siblings_params)
 
@@ -105,7 +106,7 @@ defmodule Positioner do
       WHERE #{source}.id = ordering.id AND #{source}.id <> $#{params_offset} AND coalesce(ordering.current_position, 0) <> ordering.expected_position
     """
 
-    SQL.query!(@repo, sql, siblings_params ++ [position])
+    SQL.query!(Positioner.Config.repo(), sql, siblings_params ++ [position])
 
     :ok
   end
@@ -121,7 +122,8 @@ defmodule Positioner do
       |> where([source: s], s.id != ^id)
       |> select([source: s], [s.id, field(s, ^field_name), s.updated_at])
 
-    {siblings_query_string, siblings_params} = @repo.to_sql(:all, siblings_query)
+    {siblings_query_string, siblings_params} =
+      Positioner.Config.repo().to_sql(:all, siblings_query)
 
     params_offset = Enum.count(siblings_params)
 
@@ -135,7 +137,80 @@ defmodule Positioner do
       WHERE #{source}.id = ordering.id AND #{source}.id <> $#{params_offset} AND coalesce(ordering.current_position, 0) <> ordering.expected_position
     """
 
-    SQL.query!(@repo, sql, siblings_params)
+    SQL.query!(Positioner.Config.repo(), sql, siblings_params)
+
+    :ok
+  end
+
+  def update_positions!(schema_module, scopes \\ [], field_name \\ :position, ids)
+      when is_list(ids) and is_atom(field_name) do
+    source = schema_module.__schema__(:source)
+
+    subquery =
+      source
+      |> from(as: :source)
+      |> scope_query(scopes)
+      |> select([source: s], %{
+        id: s.id,
+        current_position: field(s, ^field_name),
+        expected_position: row_number() |> over(:expected_position_window)
+      })
+      |> windows([source: s],
+        expected_position_window: [
+          order_by: [
+            asc_nulls_last: fragment("array_position(?::bigint[], ?::bigint)", ^ids, s.id),
+            asc: field(s, ^field_name)
+          ]
+        ]
+      )
+
+    {subquery_string, subquery_params} = Positioner.Config.repo().to_sql(:all, subquery)
+
+    SQL.query!(
+      Positioner.Config.repo(),
+      """
+      UPDATE #{source}
+      SET #{field_name} = ordering.expected_position
+      FROM(#{subquery_string}) as ordering(id, current_position, expected_position)
+      WHERE #{source}.id = ordering.id AND coalesce(ordering.current_position, 0) <> ordering.expected_position
+      RETURNING #{source}.*;
+      """,
+      subquery_params
+    )
+
+    :ok
+  end
+
+  @spec refresh_order!(module(), Keyword.t(), atom()) :: :ok
+  def refresh_order!(schema_module, scopes \\ [], field_name \\ :position) do
+    source = schema_module.__schema__(:source)
+
+    subquery =
+      source
+      |> from(as: :source)
+      |> scope_query(scopes)
+      |> select([source: s], %{
+        id: s.id,
+        current_position: field(s, ^field_name),
+        expected_position: row_number() |> over(:expected_position_window)
+      })
+      |> windows([source: s],
+        expected_position_window: [order_by: [asc: field(s, ^field_name), desc: s.updated_at]]
+      )
+
+    {subquery_string, subquery_params} = Positioner.Config.repo().to_sql(:all, subquery)
+
+    SQL.query!(
+      Positioner.Config.repo(),
+      """
+      UPDATE #{source}
+      SET #{field_name} = ordering.expected_position
+      FROM(#{subquery_string}) as ordering(id, current_position, expected_position)
+      WHERE #{source}.id = ordering.id AND coalesce(ordering.current_position, 0) <> ordering.expected_position
+      RETURNING #{source}.*;
+      """,
+      subquery_params
+    )
 
     :ok
   end
