@@ -1,10 +1,17 @@
 defmodule Positioner.Changeset do
   import Ecto.Changeset
 
-  def set_order(changeset, field_name \\ :position, scopes \\ []) do
+  @spec set_order(Ecto.Changeset.t(), atom(), list(atom()) | atom()) :: Ecto.Changeset.t()
+  def set_order(changeset, field_name \\ :position, scopes \\ [])
+
+  def set_order(changeset, field_name, scopes) when not is_list(scopes) do
+    set_order(changeset, field_name, List.wrap(scopes))
+  end
+
+  def set_order(changeset, field_name, scopes) do
     prepare_changes(changeset, fn changeset ->
       model_name = fetch_field!(changeset, :__struct__)
-      collection_scope_params = collection_scope(changeset, List.wrap(scopes))
+      collection_scope_params = collection_scope(changeset, scopes)
 
       case changeset.action do
         :insert -> on_insert(changeset, model_name, collection_scope_params, field_name)
@@ -20,7 +27,7 @@ defmodule Positioner.Changeset do
       Positioner.insert_at(model_name, collection_scope, field_name, given_position)
       changeset
     else
-      new_position = Positioner.position_for_new(model_name, collection_scope)
+      new_position = Positioner.position_for_new(model_name, collection_scope, field_name)
       changeset |> put_change(field_name, new_position)
     end
   end
@@ -29,22 +36,39 @@ defmodule Positioner.Changeset do
     cond do
       scope_changed?(changeset, scopes) ->
         id = fetch_field!(changeset, :id)
-        position = fetch_field!(changeset, field_name)
+
+        position =
+          case fetch_field!(changeset, field_name) do
+            nil -> Positioner.position_for_new(model_name, collection_scope, field_name)
+            value -> value
+          end
+
         old_scopes = current_collection_scope(changeset, scopes)
 
         Positioner.insert_at(model_name, collection_scope, field_name, position)
         Positioner.delete(model_name, old_scopes, field_name, id)
 
+        changeset |> put_change(field_name, position)
+
       position_changed?(changeset, field_name) ->
         id = fetch_field!(changeset, :id)
+        current_position = Map.get(changeset.data, field_name, 1)
         given_position = get_change(changeset, field_name)
-        Positioner.update_to(model_name, collection_scope, field_name, given_position, id)
+
+        Positioner.update_to(
+          model_name,
+          collection_scope,
+          field_name,
+          current_position,
+          given_position,
+          id
+        )
+
+        changeset
 
       true ->
-        :ok
+        changeset
     end
-
-    changeset
   end
 
   defp on_delete(%{data: %{id: id}} = changeset, model_name, collection_scope, field_name) do

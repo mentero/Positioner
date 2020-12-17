@@ -60,11 +60,11 @@ defmodule Positioner do
       UPDATE #{source}
       SET #{field_name} = ordering.expected_position
       FROM (
-        SELECT "id", "position", row_number() OVER (ORDER BY #{field_name} ASC, "updated_at" DESC NULLS LAST) AS "expected_position"
+        SELECT "id", "#{field_name}", row_number() OVER (ORDER BY #{field_name} ASC, "updated_at" DESC NULLS LAST) AS "expected_position"
         FROM (
           (#{siblings_query_string})
           UNION
-          (SELECT 0 as "id", $#{1 + params_offset} as "#{field_name}", NOW() as "updated_at")
+          (SELECT 0 as "id", $#{1 + params_offset} as "#{field_name}", NOW() + INTERVAL '1 day' as "updated_at")
         ) AS collection
       ) AS ordering(id, current_position, expected_position)
       WHERE #{source}.id = ordering.id AND #{source}.id <> 0 AND coalesce(ordering.current_position, 0) <> ordering.expected_position
@@ -76,7 +76,14 @@ defmodule Positioner do
   end
 
   @spec update_to(Ecto.Schema.t(), keyword(), atom(), integer(), integer()) :: :ok
-  def update_to(schema_module, scopes \\ [], field_name \\ :position, position, id)
+  def update_to(
+        schema_module,
+        scopes \\ [],
+        field_name \\ :position,
+        current_position,
+        position,
+        id
+      )
       when is_atom(field_name) and is_integer(position) and is_integer(id) do
     source = schema_module.__schema__(:source)
 
@@ -92,21 +99,31 @@ defmodule Positioner do
 
     params_offset = Enum.count(siblings_params)
 
+    new_position =
+      if not is_nil(current_position) and current_position < position do
+        position + 1
+      else
+        position
+      end
+
     sql = """
       UPDATE #{source}
       SET #{field_name} = ordering.expected_position
       FROM (
-        SELECT "id", "position", row_number() OVER (ORDER BY #{field_name} ASC, "updated_at" DESC NULLS LAST) AS "expected_position"
+        SELECT
+          collection."id",
+          collection."#{field_name}",
+          row_number() OVER (ORDER BY collection.#{field_name} ASC, collection."updated_at" DESC NULLS LAST) AS "expected_position"
         FROM (
           (#{siblings_query_string})
           UNION
-          (SELECT $#{params_offset} as "id", $#{1 + params_offset} as "#{field_name}", NOW() as "updated_at")
+          (SELECT $#{params_offset} as "id", $#{1 + params_offset} as "#{field_name}", NOW() + INTERVAL '1 day' as "updated_at")
         ) AS collection
       ) AS ordering(id, current_position, expected_position)
       WHERE #{source}.id = ordering.id AND #{source}.id <> $#{params_offset} AND coalesce(ordering.current_position, 0) <> ordering.expected_position
     """
 
-    SQL.query!(Positioner.Config.repo(), sql, siblings_params ++ [position])
+    SQL.query!(Positioner.Config.repo(), sql, siblings_params ++ [new_position])
 
     :ok
   end
@@ -131,7 +148,7 @@ defmodule Positioner do
       UPDATE #{source}
       SET #{field_name} = ordering.expected_position
       FROM (
-        SELECT "id", "position", row_number() OVER (ORDER BY #{field_name} ASC, "updated_at" DESC NULLS LAST) AS "expected_position"
+        SELECT "id", "#{field_name}", row_number() OVER (ORDER BY #{field_name} ASC, "updated_at" DESC NULLS LAST) AS "expected_position"
         FROM (#{siblings_query_string}) AS collection
       ) AS ordering(id, current_position, expected_position)
       WHERE #{source}.id = ordering.id AND #{source}.id <> $#{params_offset} AND coalesce(ordering.current_position, 0) <> ordering.expected_position
