@@ -1,193 +1,202 @@
 defmodule PositionerTest do
   use Positioner.TestCase
 
-  import Ecto.Changeset
-  import Ecto.Query
+  import Positioner.TestHelpers
 
-  alias Positioner.Repo
+  describe "position_for_new" do
+    test "there are no records in a scope" do
+      %{id: tenant_id} = insert_tenant!()
 
-  def insert_dummy!(attrs \\ []) do
-    %Dummy{tenant: %Tenant{}}
-    |> struct(attrs)
-    |> Repo.insert!()
-  end
-
-  def insert_tenant!(attrs \\ []) do
-    %Tenant{} |> struct(attrs) |> Repo.insert!()
-  end
-
-  describe "insert!" do
-    test "there are no records" do
-      tenant = insert_tenant!()
-
-      assert %{id: d1, position: 1} =
-               %Dummy{}
-               |> create_changeset(tenant, %{})
-               |> Repo.insert!()
-
-      assert [%{id: ^d1, position: 1}] =
-               Dummy |> select([:id, :position]) |> order_by(asc: :position) |> Repo.all()
+      assert 1 = Positioner.position_for_new(Dummy, [tenant_id: tenant_id], :position)
     end
 
-    test "there are multiple records" do
+    test "there are several records in a scope" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      insert_dummy!(tenant: tenant, position: 1)
+      insert_dummy!(tenant: tenant, position: 2)
+
+      assert 3 = Positioner.position_for_new(Dummy, [tenant_id: tenant_id], :position)
+    end
+
+    test "adding to another scope" do
       tenant = insert_tenant!()
+      %{id: another_tenant_id} = insert_tenant!()
+
+      insert_dummy!(tenant: tenant, position: 1)
+      insert_dummy!(tenant: tenant, position: 2)
+
+      assert 1 = Positioner.position_for_new(Dummy, [tenant_id: another_tenant_id], :position)
+    end
+  end
+
+  describe "insert_at" do
+    test "in the beginning" do
+      %{id: tenant_id} = tenant = insert_tenant!()
 
       %{id: d1} = insert_dummy!(position: 1, tenant: tenant)
       %{id: d2} = insert_dummy!(position: 2, tenant: tenant)
       %{id: d3} = insert_dummy!(position: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, tenant: tenant)
 
-      assert %{id: d4, position: 4} =
-               %Dummy{}
-               |> create_changeset(tenant, %{})
-               |> Repo.insert!()
+      Positioner.insert_at(Dummy, [tenant_id: tenant_id], :position, 1)
+
+      assert [
+               %{id: ^d1, position: 2},
+               %{id: ^d2, position: 3},
+               %{id: ^d3, position: 4},
+               %{id: ^d4, position: 5}
+             ] = all_dummies!()
+    end
+
+    test "in the middle" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(position: 1, tenant: tenant)
+      %{id: d2} = insert_dummy!(position: 2, tenant: tenant)
+      %{id: d3} = insert_dummy!(position: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, tenant: tenant)
+
+      Positioner.insert_at(Dummy, [tenant_id: tenant_id], :position, 3)
+
+      assert [
+               %{id: ^d1, position: 1},
+               %{id: ^d2, position: 2},
+               %{id: ^d3, position: 4},
+               %{id: ^d4, position: 5}
+             ] = all_dummies!()
+    end
+
+    test "at the end" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(position: 1, tenant: tenant)
+      %{id: d2} = insert_dummy!(position: 2, tenant: tenant)
+      %{id: d3} = insert_dummy!(position: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, tenant: tenant)
+
+      Positioner.insert_at(Dummy, [tenant_id: tenant_id], :position, 5)
 
       assert [
                %{id: ^d1, position: 1},
                %{id: ^d2, position: 2},
                %{id: ^d3, position: 3},
                %{id: ^d4, position: 4}
-             ] = Dummy |> select([:id, :position]) |> order_by(asc: :position) |> Repo.all()
+             ] = all_dummies!()
     end
 
-    test "inserting in between other records" do
-      tenant = insert_tenant!()
+    test "multiple scopes" do
+      %{id: d1} = insert_dummy!(position: 1, title: "A")
+      %{id: d2} = insert_dummy!(position: 2, title: "A")
+      %{id: d3} = insert_dummy!(position: 3, title: "A")
+      %{id: d4} = insert_dummy!(position: 4, title: "A")
+      %{id: d5} = insert_dummy!(position: 1, title: "B")
+      %{id: d6} = insert_dummy!(position: 2, title: "B")
+
+      Positioner.insert_at(Dummy, [title: "A"], :position, 3)
+
+      assert [
+               %{id: ^d1, position: 1, title: "A"},
+               %{id: ^d2, position: 2, title: "A"},
+               %{id: ^d3, position: 4, title: "A"},
+               %{id: ^d4, position: 5, title: "A"},
+               %{id: ^d5, position: 1, title: "B"},
+               %{id: ^d6, position: 2, title: "B"}
+             ] = all_dummies!()
+    end
+
+    test "different field" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(position: 1, idx: 1, tenant: tenant)
+      %{id: d2} = insert_dummy!(position: 2, idx: 2, tenant: tenant)
+      %{id: d3} = insert_dummy!(position: 3, idx: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, idx: 4, tenant: tenant)
+
+      Positioner.insert_at(Dummy, [tenant_id: tenant_id], :idx, 3)
+
+      assert [
+               %{id: ^d1, position: 1, idx: 1},
+               %{id: ^d2, position: 2, idx: 2},
+               %{id: ^d3, position: 3, idx: 4},
+               %{id: ^d4, position: 4, idx: 5}
+             ] = all_dummies!()
+    end
+  end
+
+  describe "update_to" do
+    test "move forward" do
+      %{id: tenant_id} = tenant = insert_tenant!()
 
       %{id: d1} = insert_dummy!(position: 1, tenant: tenant)
-      %{id: d2} = insert_dummy!(position: 2, tenant: tenant)
+      %{id: to_be_3} = insert_dummy!(position: 2, tenant: tenant)
       %{id: d3} = insert_dummy!(position: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, tenant: tenant)
 
-      assert %{id: d4, position: 2} =
-               %Dummy{}
-               |> create_changeset(tenant, %{"position" => 2})
-               |> Repo.insert!()
+      Positioner.update_to(Dummy, [tenant_id: tenant_id], :position, 2, 3, to_be_3)
 
       assert [
                %{id: ^d1, position: 1},
-               %{id: ^d4, position: 2},
-               %{id: ^d2, position: 3},
-               %{id: ^d3, position: 4}
-             ] = Dummy |> select([:id, :position]) |> order_by(asc: :position) |> Repo.all()
+               %{id: ^to_be_3, position: 2},
+               %{id: ^d3, position: 2},
+               %{id: ^d4, position: 4}
+             ] = all_dummies!()
     end
 
-    defp create_changeset(model, tenant, params) do
-      model
-      |> cast(params, [:position])
-      |> put_change(:tenant_id, tenant.id)
-      |> Positioner.Changeset.set_order(:position, [:tenant_id])
-    end
-  end
-
-  describe "update!" do
-    test "position didn't change" do
-      tenant = insert_tenant!()
-
-      %{id: d1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
-      %{id: d2} = insert_dummy!(title: "2", position: 2, tenant: tenant)
-      %{id: d3} = subject = insert_dummy!(title: "3", position: 3, tenant: tenant)
-      %{id: d4} = insert_dummy!(title: "4", position: 4, tenant: tenant)
-
-      assert %{id: ^d3, title: "subject", position: 3} =
-               subject
-               |> update_changeset(tenant, %{"title" => "subject"})
-               |> Repo.update!()
-
-      assert [
-               %{id: ^d1, title: "1", position: 1},
-               %{id: ^d2, title: "2", position: 2},
-               %{id: ^d3, title: "subject", position: 3},
-               %{id: ^d4, title: "4", position: 4}
-             ] =
-               Dummy |> select([:id, :title, :position]) |> order_by(asc: :position) |> Repo.all()
-    end
-
-    test "position have changed" do
-      tenant = insert_tenant!()
-
-      %{id: d1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
-      %{id: d2} = insert_dummy!(title: "2", position: 2, tenant: tenant)
-      %{id: d3} = subject = insert_dummy!(title: "3", position: 3, tenant: tenant)
-      %{id: d4} = insert_dummy!(title: "4", position: 4, tenant: tenant)
-
-      assert %{id: ^d3, title: "subject", position: 2} =
-               subject
-               |> update_changeset(tenant, %{"title" => "subject", "position" => 2})
-               |> Repo.update!()
-
-      assert [
-               %{id: ^d1, title: "1", position: 1},
-               %{id: ^d3, title: "subject", position: 2},
-               %{id: ^d2, title: "2", position: 3},
-               %{id: ^d4, title: "4", position: 4}
-             ] =
-               Dummy |> select([:id, :title, :position]) |> order_by(asc: :position) |> Repo.all()
-    end
-
-    test "scope changed" do
+    test "move backwards" do
       %{id: tenant_id} = tenant = insert_tenant!()
-      %{id: another_tenant_id} = another_tenant = insert_tenant!()
 
-      %{id: d1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
-      %{id: d2} = subject = insert_dummy!(title: "2", position: 2, tenant: tenant)
-      %{id: d3} = insert_dummy!(title: "3", position: 3, tenant: tenant)
+      %{id: d1} = insert_dummy!(position: 1, tenant: tenant)
+      %{id: d2} = insert_dummy!(position: 2, tenant: tenant)
+      %{id: to_be_2} = insert_dummy!(position: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, tenant: tenant)
 
-      %{id: f1} = insert_dummy!(title: "1", position: 1, tenant: another_tenant)
-      %{id: f2} = insert_dummy!(title: "2", position: 2, tenant: another_tenant)
-      %{id: f3} = insert_dummy!(title: "3", position: 3, tenant: another_tenant)
-
-      assert %{id: ^d2, title: "subject", position: 2, tenant_id: ^another_tenant_id} =
-               subject
-               |> update_changeset(tenant, %{
-                 "title" => "subject",
-                 "position" => 2,
-                 "tenant_id" => another_tenant_id
-               })
-               |> Repo.update!()
+      Positioner.update_to(Dummy, [tenant_id: tenant_id], :position, 3, 2, to_be_2)
 
       assert [
-               %{id: ^d1, title: "1", position: 1, tenant_id: ^tenant_id},
-               %{id: ^d3, title: "3", position: 2, tenant_id: ^tenant_id},
-               %{id: ^f1, title: "1", position: 1, tenant_id: ^another_tenant_id},
-               %{id: ^d2, title: "subject", position: 2, tenant_id: ^another_tenant_id},
-               %{id: ^f2, title: "2", position: 3, tenant_id: ^another_tenant_id},
-               %{id: ^f3, title: "3", position: 4, tenant_id: ^another_tenant_id}
-             ] =
-               Dummy
-               |> select([:id, :title, :position, :tenant_id])
-               |> order_by(asc: :tenant_id, asc: :position)
-               |> Repo.all()
+               %{id: ^d1, position: 1},
+               %{id: ^to_be_2, position: 3},
+               %{id: ^d2, position: 3},
+               %{id: ^d4, position: 4}
+             ] = all_dummies!()
     end
 
-    defp update_changeset(model, _tenant, params) do
-      model
-      |> cast(params, [:title, :position, :tenant_id])
-      |> Positioner.Changeset.set_order(:position, [:tenant_id])
+    test "different field" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(position: 1, idx: 1, tenant: tenant)
+      %{id: to_be_3} = insert_dummy!(position: 2, idx: 2, tenant: tenant)
+      %{id: d3} = insert_dummy!(position: 3, idx: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, idx: 4, tenant: tenant)
+
+      Positioner.update_to(Dummy, [tenant_id: tenant_id], :idx, 2, 3, to_be_3)
+
+      assert [
+               %{id: ^d1, position: 1, idx: 1},
+               %{id: ^to_be_3, position: 2, idx: 2},
+               %{id: ^d3, position: 3, idx: 2},
+               %{id: ^d4, position: 4, idx: 4}
+             ] = all_dummies!()
     end
   end
 
-  describe "delete!" do
-    test "delete from the collection" do
-      tenant = insert_tenant!()
+  describe "delete" do
+    test "from the middle" do
+      %{id: tenant_id} = tenant = insert_tenant!()
 
-      %{id: d1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
-      %{id: d2} = insert_dummy!(title: "2", position: 2, tenant: tenant)
-      %{id: d3} = subject = insert_dummy!(title: "3", position: 3, tenant: tenant)
-      %{id: d4} = insert_dummy!(title: "4", position: 4, tenant: tenant)
+      %{id: d1} = insert_dummy!(position: 1, tenant: tenant)
+      %{id: d2} = insert_dummy!(position: 2, tenant: tenant)
+      %{id: to_be_removed} = insert_dummy!(position: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, tenant: tenant)
 
-      assert %{id: ^d3, title: "3", position: 3} =
-               subject
-               |> delete_changeset()
-               |> Repo.delete!()
+      Positioner.delete(Dummy, [tenant_id: tenant_id], :position, to_be_removed)
 
       assert [
-               %{id: ^d1, title: "1", position: 1},
-               %{id: ^d2, title: "2", position: 2},
-               %{id: ^d4, title: "4", position: 3}
-             ] =
-               Dummy |> select([:id, :title, :position]) |> order_by(asc: :position) |> Repo.all()
-    end
-
-    defp delete_changeset(model) do
-      model |> change() |> Positioner.Changeset.set_order(:position, [:tenant_id])
+               %{id: ^d1, position: 1},
+               %{id: ^d2, position: 2},
+               %{id: ^to_be_removed, position: 3},
+               %{id: ^d4, position: 3}
+             ] = all_dummies!()
     end
   end
 
@@ -207,7 +216,73 @@ defmodule PositionerTest do
                %{id: ^d4, position: 2},
                %{id: ^d2, position: 3},
                %{id: ^d1, position: 4}
-             ] = Dummy |> select([:id, :position]) |> order_by(asc: :position) |> Repo.all()
+             ] = all_dummies!()
+    end
+
+    test "records not in params are pushed to the end" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(position: 1, tenant: tenant)
+      %{id: d2} = insert_dummy!(position: 2, tenant: tenant)
+      %{id: d3} = insert_dummy!(position: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, tenant: tenant)
+
+      Positioner.update_positions!(Dummy, [tenant_id: tenant_id], :position, [d4, d3])
+
+      assert [
+               %{id: ^d4, position: 1},
+               %{id: ^d3, position: 2},
+               %{id: ^d1, position: 3},
+               %{id: ^d2, position: 4}
+             ] = all_dummies!()
+    end
+
+    test "ignores records out of scope" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+      another_tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(position: 1, tenant: tenant)
+      %{id: d2} = insert_dummy!(position: 2, tenant: tenant)
+      %{id: d3} = insert_dummy!(position: 3, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, tenant: tenant)
+
+      %{id: ad1} = insert_dummy!(position: 1, tenant: another_tenant)
+      %{id: ad2} = insert_dummy!(position: 2, tenant: another_tenant)
+      %{id: ad3} = insert_dummy!(position: 3, tenant: another_tenant)
+      %{id: ad4} = insert_dummy!(position: 4, tenant: another_tenant)
+
+      params = [d1, ad1, d2, ad2, d4, ad4, d3, ad3]
+
+      Positioner.update_positions!(Dummy, [tenant_id: tenant_id], :position, params)
+
+      assert [
+               %{id: ^d1, position: 1},
+               %{id: ^d2, position: 2},
+               %{id: ^d4, position: 3},
+               %{id: ^d3, position: 4},
+               %{id: ^ad1, position: 1},
+               %{id: ^ad2, position: 2},
+               %{id: ^ad3, position: 3},
+               %{id: ^ad4, position: 4}
+             ] = all_dummies!()
+    end
+
+    test "reorders a field other than position" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: d1} = insert_dummy!(position: 1, idx: 4, tenant: tenant)
+      %{id: d2} = insert_dummy!(position: 2, idx: 3, tenant: tenant)
+      %{id: d3} = insert_dummy!(position: 3, idx: 2, tenant: tenant)
+      %{id: d4} = insert_dummy!(position: 4, idx: 1, tenant: tenant)
+
+      Positioner.update_positions!(Dummy, [tenant_id: tenant_id], :idx, [d2, d3, d1, d4])
+
+      assert [
+               %{id: ^d1, position: 1, idx: 3},
+               %{id: ^d2, position: 2, idx: 1},
+               %{id: ^d3, position: 3, idx: 2},
+               %{id: ^d4, position: 4, idx: 4}
+             ] = all_dummies!()
     end
   end
 
@@ -215,32 +290,32 @@ defmodule PositionerTest do
     test "reorders records to fill gaps and remove duplicated positions" do
       %{id: tenant_id} = tenant = insert_tenant!()
 
-      %{id: d1} = insert_dummy!(position: 9, tenant: tenant)
+      %{id: dummy_1} = insert_dummy!(position: 9, tenant: tenant)
 
-      %{id: d2} =
+      %{id: dummy_2} =
         insert_dummy!(
           position: 3,
           tenant: tenant,
           updated_at: ~N[2020-01-01 12:00:00]
         )
 
-      %{id: d3} =
+      %{id: dummy_3} =
         insert_dummy!(
           position: 3,
           tenant: tenant,
           updated_at: ~N[2020-01-01 12:01:01]
         )
 
-      %{id: d4} = insert_dummy!(position: 1, tenant: tenant)
+      %{id: dummy_4} = insert_dummy!(position: 1, tenant: tenant)
 
       Positioner.refresh_order!(Dummy, [tenant_id: tenant_id], :position)
 
       assert [
-               %{id: ^d4, position: 1},
-               %{id: ^d3, position: 2},
-               %{id: ^d2, position: 3},
-               %{id: ^d1, position: 4}
-             ] = Dummy |> select([:id, :position]) |> order_by(asc: :position) |> Repo.all()
+               %{id: ^dummy_4, position: 1},
+               %{id: ^dummy_3, position: 2},
+               %{id: ^dummy_2, position: 3},
+               %{id: ^dummy_1, position: 4}
+             ] = all_dummies!()
     end
   end
 end

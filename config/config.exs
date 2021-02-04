@@ -1,5 +1,7 @@
 import Config
 
+config :logger, level: :info
+
 if config_env() == :test do
   config :positioner, Positioner.Repo,
     username: System.get_env("TEST_DB_USERNAME") || "development",

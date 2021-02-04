@@ -2,6 +2,18 @@ defmodule Positioner do
   import Ecto.Query
   alias Ecto.Adapters.SQL
 
+  @doc """
+  Calculates the position for new record in a given scope.
+  It's either 1 if there are no records or end of the scope.
+
+  Example:
+      iex> Positioner.positioner_for_new(Dummy, [tenant_id: tenant_id], :position)
+      1
+      iex> Positioner.positioner_for_new(Dummy, [tenant_id: tenant_id], :position)
+      2
+      iex> Positioner.positioner_for_new(Dummy, [tenant_id: another_tenant_id], :position)
+      1
+  """
   @spec position_for_new(Ecto.Schema.t(), keyword(), atom()) :: integer()
   def position_for_new(schema_module, scopes \\ [], field_name \\ :position) do
     schema_module
