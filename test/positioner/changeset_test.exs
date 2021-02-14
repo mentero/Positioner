@@ -57,8 +57,6 @@ defmodule Positioner.ChangesetTest do
              ] = all_dummies!()
     end
 
-    # Not working currently. Create respects the params over ordering
-    @tag :skip
     test "at the position far above the scope" do
       tenant = insert_tenant!()
 
@@ -66,7 +64,7 @@ defmodule Positioner.ChangesetTest do
       %{id: dummy_2} = insert_dummy!(position: 2, tenant: tenant)
       %{id: dummy_3} = insert_dummy!(position: 3, tenant: tenant)
 
-      assert %{id: dummy_4, position: 100} =
+      assert %{id: dummy_4, position: 4} =
                %Dummy{}
                |> Dummy.create_changeset(tenant, %{"position" => 100})
                |> Repo.insert!()
@@ -192,8 +190,6 @@ defmodule Positioner.ChangesetTest do
              ] = all_dummies!()
     end
 
-    # Not working currently. Create respects the params over ordering
-    @tag :skip
     test "to a position way ahead of the collection" do
       tenant = insert_tenant!()
 
@@ -202,7 +198,7 @@ defmodule Positioner.ChangesetTest do
       %{id: dummy_3} = insert_dummy!(title: "3", position: 3, tenant: tenant)
       %{id: dummy_4} = insert_dummy!(title: "4", position: 4, tenant: tenant)
 
-      assert %{id: ^dummy_2, title: "subject", position: 100} =
+      assert %{id: ^dummy_2, title: "subject", position: 4} =
                subject
                |> Dummy.update_changeset(tenant, %{"title" => "subject", "position" => 100})
                |> Repo.update!()
@@ -210,8 +206,8 @@ defmodule Positioner.ChangesetTest do
       assert [
                %{id: ^dummy_1, title: "1", position: 1},
                %{id: ^dummy_3, title: "3", position: 2},
-               %{id: ^dummy_2, title: "subject", position: 3},
-               %{id: ^dummy_4, title: "4", position: 4}
+               %{id: ^dummy_4, title: "4", position: 3},
+               %{id: ^dummy_2, title: "subject", position: 4}
              ] = all_dummies!()
     end
 
@@ -246,8 +242,6 @@ defmodule Positioner.ChangesetTest do
              ] = all_dummies!()
     end
 
-    # Not working currently. Don't know why.
-    @tag :skip
     test "puts at the end of new scope if position specified" do
       %{id: tenant_id} = tenant = insert_tenant!()
       %{id: another_tenant_id} = another_tenant = insert_tenant!()

@@ -27,6 +27,17 @@ defmodule Positioner do
     end
   end
 
+  defp siblings_query(schema_module, scopes, field_name) when is_atom(field_name) do
+    schema_module
+    |> from(as: :source)
+    |> scope_query(scopes)
+    |> select([source: s], %{
+      id: s.id,
+      position: field(s, ^field_name),
+      updated_at: s.updated_at
+    })
+  end
+
   @doc """
   How it works:
     This query is build from few parts
@@ -55,34 +66,42 @@ defmodule Positioner do
   @spec insert_at(Ecto.Schema.t(), keyword(), atom(), integer()) :: :ok
   def insert_at(schema_module, scopes \\ [], field_name \\ :position, position)
       when is_atom(field_name) and is_integer(position) do
-    source = schema_module.__schema__(:source)
+    siblings_query = siblings_query(schema_module, scopes, field_name)
 
-    siblings_query =
+    fake_record_query =
       schema_module
       |> from(as: :source)
-      |> scope_query(scopes)
-      |> select([source: s], [s.id, field(s, ^field_name), s.updated_at])
+      |> select(%{
+        id: fragment(~s[? as "id"], 0),
+        position: fragment(~s[? as "position"], ^position),
+        updated_at: fragment(~s[NOW() + INTERVAL '1 day' as "updated_at"])
+      })
 
-    {siblings_query_string, siblings_params} =
-      Positioner.Config.repo().to_sql(:all, siblings_query)
+    collection = union(siblings_query, ^fake_record_query)
 
-    params_offset = Enum.count(siblings_params)
+    ordering_query =
+      collection
+      |> subquery()
+      |> from(as: :collection)
+      |> select([collection: c], %{
+        id: c.id,
+        current_position: coalesce(c.position, 0),
+        expected_position:
+          row_number()
+          |> over(order_by: [asc: c.position, desc_nulls_last: c.updated_at, asc: c.id])
+      })
 
-    sql = """
-      UPDATE #{source}
-      SET #{field_name} = ordering.expected_position
-      FROM (
-        SELECT "id", "#{field_name}", row_number() OVER (ORDER BY #{field_name} ASC, "updated_at" DESC NULLS LAST) AS "expected_position"
-        FROM (
-          (#{siblings_query_string})
-          UNION
-          (SELECT 0 as "id", $#{1 + params_offset} as "#{field_name}", NOW() + INTERVAL '1 day' as "updated_at")
-        ) AS collection
-      ) AS ordering(id, current_position, expected_position)
-      WHERE #{source}.id = ordering.id AND #{source}.id <> 0 AND coalesce(ordering.current_position, 0) <> ordering.expected_position
-    """
+    final_query =
+      schema_module
+      |> from(as: :source)
+      |> join(:inner, [source: s], o in subquery(ordering_query),
+        on: s.id == o.id and o.id != 0,
+        as: :ordering
+      )
+      |> where([source: s, ordering: o], o.current_position != o.expected_position)
+      |> update([source: s, ordering: o], set: [{^field_name, o.expected_position}])
 
-    SQL.query!(Positioner.Config.repo(), sql, siblings_params ++ [position])
+    Positioner.Config.repo().update_all(final_query, [])
 
     :ok
   end
@@ -97,14 +116,13 @@ defmodule Positioner do
         id
       )
       when is_atom(field_name) and is_integer(position) and is_integer(id) do
-    source = schema_module.__schema__(:source)
+    # source = schema_module.__schema__(:source)
 
     siblings_query =
       schema_module
       |> from(as: :source)
       |> scope_query(scopes)
       |> where([source: s], s.id != ^id)
-      |> select([source: s], [s.id, field(s, ^field_name), s.updated_at])
 
     {siblings_query_string, siblings_params} =
       Positioner.Config.repo().to_sql(:all, siblings_query)

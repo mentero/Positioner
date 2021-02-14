@@ -22,49 +22,27 @@ defmodule Positioner.Changeset do
   end
 
   defp on_insert(changeset, model_name, collection_scope, field_name) do
-    if position_changed?(changeset, field_name) do
-      given_position = get_change(changeset, field_name)
-      Positioner.insert_at(model_name, collection_scope, field_name, given_position)
-      changeset
-    else
-      new_position = Positioner.position_for_new(model_name, collection_scope, field_name)
-      changeset |> put_change(field_name, new_position)
-    end
+    given_position = get_change(changeset, field_name)
+    max_position = Positioner.position_for_new(model_name, collection_scope, field_name)
+
+    insert_position =
+      if is_nil(given_position) or given_position > max_position do
+        max_position
+      else
+        given_position
+      end
+
+    Positioner.insert_at(model_name, collection_scope, field_name, insert_position)
+    changeset |> put_change(field_name, insert_position)
   end
 
   defp on_update(changeset, model_name, collection_scope, scopes, field_name) do
     cond do
       scope_changed?(changeset, scopes) ->
-        id = fetch_field!(changeset, :id)
-
-        position =
-          case fetch_field!(changeset, field_name) do
-            nil -> Positioner.position_for_new(model_name, collection_scope, field_name)
-            value -> value
-          end
-
-        old_scopes = current_collection_scope(changeset, scopes)
-
-        Positioner.insert_at(model_name, collection_scope, field_name, position)
-        Positioner.delete(model_name, old_scopes, field_name, id)
-
-        changeset |> put_change(field_name, position)
+        update_to_different_scope(changeset, model_name, collection_scope, scopes, field_name)
 
       position_changed?(changeset, field_name) ->
-        id = fetch_field!(changeset, :id)
-        current_position = Map.get(changeset.data, field_name, 1)
-        given_position = get_change(changeset, field_name)
-
-        Positioner.update_to(
-          model_name,
-          collection_scope,
-          field_name,
-          current_position,
-          given_position,
-          id
-        )
-
-        changeset
+        update_same_scope(changeset, model_name, collection_scope, field_name)
 
       true ->
         changeset
@@ -74,6 +52,53 @@ defmodule Positioner.Changeset do
   defp on_delete(%{data: %{id: id}} = changeset, model_name, collection_scope, field_name) do
     Positioner.delete(model_name, collection_scope, field_name, id)
     changeset
+  end
+
+  defp update_to_different_scope(changeset, model_name, collection_scope, scopes, field_name) do
+    id = fetch_field!(changeset, :id)
+    max_position = Positioner.position_for_new(model_name, collection_scope, field_name)
+    given_position = fetch_field!(changeset, field_name)
+
+    position =
+      if position_changed?(changeset, field_name) and given_position < max_position do
+        given_position
+      else
+        max_position
+      end
+
+    old_scopes = current_collection_scope(changeset, scopes)
+
+    Positioner.insert_at(model_name, collection_scope, field_name, position)
+    Positioner.delete(model_name, old_scopes, field_name, id)
+
+    changeset |> put_change(field_name, position)
+  end
+
+  defp update_same_scope(changeset, model_name, collection_scope, field_name) do
+    id = fetch_field!(changeset, :id)
+
+    max_position = Positioner.position_for_new(model_name, collection_scope, field_name) - 1
+
+    current_position = Map.get(changeset.data, field_name, 1)
+    given_position = get_change(changeset, field_name)
+
+    new_position =
+      if given_position < max_position do
+        given_position
+      else
+        max_position
+      end
+
+    Positioner.update_to(
+      model_name,
+      collection_scope,
+      field_name,
+      current_position,
+      new_position,
+      id
+    )
+
+    changeset |> put_change(field_name, new_position)
   end
 
   defp collection_scope(changeset, scopes) do
@@ -88,7 +113,13 @@ defmodule Positioner.Changeset do
     Enum.any?(scopes, &get_change(changeset, &1))
   end
 
+  defp position_changed?(changeset, field_name) when is_atom(field_name) do
+    position_changed?(changeset, Atom.to_string(field_name))
+  end
+
   defp position_changed?(changeset, field_name) do
-    not is_nil(get_change(changeset, field_name))
+    changeset.params
+    |> Map.keys()
+    |> Enum.any?(fn field_change -> field_change == field_name end)
   end
 end
