@@ -1,6 +1,5 @@
 defmodule Positioner do
   import Ecto.Query
-  alias Ecto.Adapters.SQL
 
   @doc """
   Calculates the position for new record in a given scope.
@@ -27,80 +26,22 @@ defmodule Positioner do
     end
   end
 
-  defp siblings_query(schema_module, scopes, field_name) when is_atom(field_name) do
-    schema_module
-    |> from(as: :source)
-    |> scope_query(scopes)
-    |> select([source: s], %{
-      id: s.id,
-      position: field(s, ^field_name),
-      updated_at: s.updated_at
-    })
-  end
-
-  @doc """
-  How it works:
-    This query is build from few parts
-
-    1. We select all current records that match defined scope and call it siblings
-       The values for each record that we are interested in are:
-       - id
-       - position
-       - update_at
-    2. We create a union (let's call it `union`) with a fake row
-       that is representing the records we want to add and we set it's
-       - id => 0,
-       - position => value from params
-       - updated_at => current time
-    3. We use window function to assign a `row number` to each record from the `union`
-       sorted their position and updated_at. We get the `ordering` table with values as
-       - id
-       - current_position
-       - expected_position (from row_number)
-    4. We use the `ordering` to update all the records that have `current_position` not matching it's
-       `expected_position`, ignoring the row with `id = 0` since it was just a placeholder
-
-    After these steps we have a collection where all positions are ordered and there is a slot for a new record
-    at a position that we asked in params
-  """
   @spec insert_at(Ecto.Schema.t(), keyword(), atom(), integer()) :: :ok
   def insert_at(schema_module, scopes \\ [], field_name \\ :position, position)
       when is_atom(field_name) and is_integer(position) do
-    siblings_query = siblings_query(schema_module, scopes, field_name)
+    # Step 1:
+    # Create a query of all current records + a fake records at given position
+    all_records = all_records_query(schema_module, scopes, field_name)
+    fake_new_record = fake_record_query(schema_module, position)
+    fake_table = union(all_records, ^fake_new_record)
 
-    fake_record_query =
-      schema_module
-      |> from(as: :source)
-      |> select(%{
-        id: fragment(~s[? as "id"], 0),
-        position: fragment(~s[? as "position"], ^position),
-        updated_at: fragment(~s[NOW() + INTERVAL '1 day' as "updated_at"])
-      })
+    # Step 2:
+    # Order the fake table
+    ordering_query = ordered_query(fake_table)
 
-    collection = union(siblings_query, ^fake_record_query)
-
-    ordering_query =
-      collection
-      |> subquery()
-      |> from(as: :collection)
-      |> select([collection: c], %{
-        id: c.id,
-        current_position: coalesce(c.position, 0),
-        expected_position:
-          row_number()
-          |> over(order_by: [asc: c.position, desc_nulls_last: c.updated_at, asc: c.id])
-      })
-
-    final_query =
-      schema_module
-      |> from(as: :source)
-      |> join(:inner, [source: s], o in subquery(ordering_query),
-        on: s.id == o.id and o.id != 0,
-        as: :ordering
-      )
-      |> where([source: s, ordering: o], o.current_position != o.expected_position)
-      |> update([source: s, ordering: o], set: [{^field_name, o.expected_position}])
-
+    # Step 3:
+    # Update all records that have different position than the one in ordered fake table
+    final_query = final_query(schema_module, ordering_query, field_name)
     Positioner.Config.repo().update_all(final_query, [])
 
     :ok
@@ -116,18 +57,26 @@ defmodule Positioner do
         id
       )
       when is_atom(field_name) and is_integer(position) and is_integer(id) do
-    # source = schema_module.__schema__(:source)
+    # Step 1:
+    # Create a query of all current records without the one being updated
+    all_records = all_records_without_query(schema_module, scopes, field_name, id)
 
-    siblings_query =
-      schema_module
-      |> from(as: :source)
-      |> scope_query(scopes)
-      |> where([source: s], s.id != ^id)
-
-    {siblings_query_string, siblings_params} =
-      Positioner.Config.repo().to_sql(:all, siblings_query)
-
-    params_offset = Enum.count(siblings_params)
+    # Step 2:
+    # We need to create a fake record at given position.
+    # When moving the record past the current position we
+    # need to compensate for the missing record.
+    #
+    # --- Moving b -> 3 (incorrect)
+    # record:   | a b c d -> a c d -> a c d _ -> a _ c d -> a _ c d
+    # position: | 1 2 3 4    1 3 4 -> 1 3 4 3    1 3 3 4    1 2 3 4
+    #
+    # --- Moving b -> 3 (compensated)
+    # record:   | a b c d -> a c d -> a c d _ -> a c _ d -> a c _ d
+    # position: | 1 2 3 4    1 3 4 -> 1 3 4 4    1 3 4 4    1 2 3 4
+    #
+    # --- Moving c -> 2
+    # record:   | a b c d -> a b d -> a b d _ -> a _ b d -> a _ b d
+    # position: | 1 2 3 4    1 2 4 -> 1 2 4 2    1 2 2 4    1 2 3 4
 
     new_position =
       if not is_nil(current_position) and current_position < position do
@@ -136,128 +85,70 @@ defmodule Positioner do
         position
       end
 
-    sql = """
-      UPDATE #{source}
-      SET #{field_name} = ordering.expected_position
-      FROM (
-        SELECT
-          collection."id",
-          collection."#{field_name}",
-          row_number() OVER (ORDER BY collection.#{field_name} ASC, collection."updated_at" DESC NULLS LAST) AS "expected_position"
-        FROM (
-          (#{siblings_query_string})
-          UNION
-          (SELECT $#{params_offset} as "id", $#{1 + params_offset} as "#{field_name}", NOW() + INTERVAL '1 day' as "updated_at")
-        ) AS collection
-      ) AS ordering(id, current_position, expected_position)
-      WHERE #{source}.id = ordering.id AND #{source}.id <> $#{params_offset} AND coalesce(ordering.current_position, 0) <> ordering.expected_position
-    """
+    # Step 3:
+    # Get a table of all records without updated one and simulate new fake record at updated position
+    fake_record_query = fake_record_query(schema_module, new_position)
+    fake_table = union(all_records, ^fake_record_query)
 
-    SQL.query!(Positioner.Config.repo(), sql, siblings_params ++ [new_position])
+    # Step 4:
+    # Order the fake table
+    ordering_query = ordered_query(fake_table)
+
+    # Step 5:
+    # Update all records that have different position than the one in ordered fake table
+    final_query = final_without_query(schema_module, ordering_query, field_name, id)
+    Positioner.Config.repo().update_all(final_query, [])
 
     :ok
   end
 
   def delete(schema_module, scopes \\ [], field_name \\ :position, id)
       when is_atom(field_name) and is_integer(id) do
-    source = schema_module.__schema__(:source)
+    # Step 1:
+    # Get all records without the one we want to delete
+    all_records_without_ours = all_records_without_query(schema_module, scopes, field_name, id)
+    # Step 2:
+    # Order the table above
+    ordering_query = ordered_query(all_records_without_ours)
 
-    siblings_query =
-      schema_module
-      |> from(as: :source)
-      |> scope_query(scopes)
-      |> where([source: s], s.id != ^id)
-      |> select([source: s], [s.id, field(s, ^field_name), s.updated_at])
-
-    {siblings_query_string, siblings_params} =
-      Positioner.Config.repo().to_sql(:all, siblings_query)
-
-    params_offset = Enum.count(siblings_params)
-
-    sql = """
-      UPDATE #{source}
-      SET #{field_name} = ordering.expected_position
-      FROM (
-        SELECT "id", "#{field_name}", row_number() OVER (ORDER BY #{field_name} ASC, "updated_at" DESC NULLS LAST) AS "expected_position"
-        FROM (#{siblings_query_string}) AS collection
-      ) AS ordering(id, current_position, expected_position)
-      WHERE #{source}.id = ordering.id AND #{source}.id <> $#{params_offset} AND coalesce(ordering.current_position, 0) <> ordering.expected_position
-    """
-
-    SQL.query!(Positioner.Config.repo(), sql, siblings_params)
+    # Step 3:
+    # Update all records that have different position than the one in ordered table
+    final_query = final_without_query(schema_module, ordering_query, field_name, id)
+    Positioner.Config.repo().update_all(final_query, [])
 
     :ok
   end
 
   def update_positions!(schema_module, scopes \\ [], field_name \\ :position, ids)
       when is_list(ids) and is_atom(field_name) do
-    source = schema_module.__schema__(:source)
+    all_records = all_records_query(schema_module, scopes, field_name)
 
-    subquery =
-      source
-      |> from(as: :source)
-      |> scope_query(scopes)
-      |> select([source: s], %{
-        id: s.id,
-        current_position: field(s, ^field_name),
-        expected_position: row_number() |> over(:expected_position_window)
-      })
-      |> windows([source: s],
+    ordered_query =
+      ordered_query_base(all_records)
+      |> windows([collection: c],
         expected_position_window: [
           order_by: [
-            asc_nulls_last: fragment("array_position(?::bigint[], ?::bigint)", ^ids, s.id),
-            asc: field(s, ^field_name)
+            asc_nulls_last: fragment("array_position(?::bigint[], ?::bigint)", ^ids, c.id),
+            asc: c.position,
+            desc_nulls_last: c.updated_at,
+            asc: c.id
           ]
         ]
       )
 
-    {subquery_string, subquery_params} = Positioner.Config.repo().to_sql(:all, subquery)
-
-    SQL.query!(
-      Positioner.Config.repo(),
-      """
-      UPDATE #{source}
-      SET #{field_name} = ordering.expected_position
-      FROM(#{subquery_string}) as ordering(id, current_position, expected_position)
-      WHERE #{source}.id = ordering.id AND coalesce(ordering.current_position, 0) <> ordering.expected_position
-      RETURNING #{source}.*;
-      """,
-      subquery_params
-    )
+    final_query = final_query(schema_module, ordered_query, field_name)
+    Positioner.Config.repo().update_all(final_query, [])
 
     :ok
   end
 
   @spec refresh_order!(module(), Keyword.t(), atom()) :: :ok
   def refresh_order!(schema_module, scopes \\ [], field_name \\ :position) do
-    source = schema_module.__schema__(:source)
+    all_records = all_records_query(schema_module, scopes, field_name)
+    ordered_query = ordered_query(all_records)
+    final_query = final_query(schema_module, ordered_query, field_name)
 
-    subquery =
-      source
-      |> from(as: :source)
-      |> scope_query(scopes)
-      |> select([source: s], %{
-        id: s.id,
-        current_position: field(s, ^field_name),
-        expected_position: row_number() |> over(:expected_position_window)
-      })
-      |> windows([source: s],
-        expected_position_window: [order_by: [asc: field(s, ^field_name), desc: s.updated_at]]
-      )
-
-    {subquery_string, subquery_params} = Positioner.Config.repo().to_sql(:all, subquery)
-
-    SQL.query!(
-      Positioner.Config.repo(),
-      """
-      UPDATE #{source}
-      SET #{field_name} = ordering.expected_position
-      FROM(#{subquery_string}) as ordering(id, current_position, expected_position)
-      WHERE #{source}.id = ordering.id AND coalesce(ordering.current_position, 0) <> ordering.expected_position
-      RETURNING #{source}.*;
-      """,
-      subquery_params
-    )
+    Positioner.Config.repo().update_all(final_query, [])
 
     :ok
   end
@@ -274,5 +165,71 @@ defmodule Positioner do
       where(query, [q], is_nil(field(q, ^field_name)))
     end)
     |> where(^non_nil_clauses)
+  end
+
+  defp all_records_query(schema_module, scopes, field_name) when is_atom(field_name) do
+    schema_module
+    |> from(as: :source)
+    |> scope_query(scopes)
+    |> select([source: s], %{
+      id: s.id,
+      position: field(s, ^field_name),
+      updated_at: s.updated_at
+    })
+  end
+
+  defp all_records_without_query(schema_module, scopes, field_name, id)
+       when is_atom(field_name) and is_integer(id) do
+    schema_module
+    |> all_records_query(scopes, field_name)
+    |> where([source: s], s.id != ^id)
+  end
+
+  defp fake_record_query(schema_module, position) when is_integer(position) do
+    schema_module
+    |> from(as: :source)
+    |> select(%{
+      id: fragment(~s[? as "id"], 0),
+      position: fragment(~s[? as "position"], ^position),
+      updated_at: fragment(~s[NOW() + INTERVAL '1 day' as "updated_at"])
+    })
+  end
+
+  defp ordered_query(fake_table) do
+    fake_table
+    |> ordered_query_base()
+    |> windows([collection: c],
+      expected_position_window: [
+        order_by: [asc: c.position, desc_nulls_last: c.updated_at, asc: c.id]
+      ]
+    )
+  end
+
+  defp ordered_query_base(fake_table) do
+    fake_table
+    |> subquery()
+    |> from(as: :collection)
+    |> select([collection: c], %{
+      id: c.id,
+      current_position: coalesce(c.position, 0),
+      expected_position: row_number() |> over(:expected_position_window)
+    })
+  end
+
+  defp final_query(schema_module, ordered_query, field_name) do
+    schema_module
+    |> from(as: :source)
+    |> join(:inner, [source: s], o in subquery(ordered_query),
+      on: s.id == o.id and o.id != 0,
+      as: :ordering
+    )
+    |> where([source: s, ordering: o], o.current_position != o.expected_position)
+    |> update([source: s, ordering: o], set: [{^field_name, o.expected_position}])
+  end
+
+  def final_without_query(schema_module, ordered_query, field_name, id) do
+    schema_module
+    |> final_query(ordered_query, field_name)
+    |> where([source: s], s.id != ^id)
   end
 end
