@@ -113,20 +113,17 @@ defmodule Positioner.Changeset do
     Enum.any?(scopes, &get_change(changeset, &1))
   end
 
-  defp position_changed?(changeset, field_name) do
-    case get_change(changeset, field_name) do
-      nil -> position_change_requested?(changeset, field_name)
-      _ -> true
-    end
+  defp position_changed?(%{changes: changes} = changeset, field_name) do
+    Map.has_key?(changes, field_name) or position_change_requested?(changeset, field_name)
   end
 
   # Handles an edge case where we change the scope but Ecto does not mark position
   # as changed because it occupies the same position in new scope.
   # From a row point of view it didn't change, but from a collection point of view it did.
-  defp position_change_requested?(%{params: params} = _changeset, field_name)
-       when is_map(params) do
-    params
-    |> Map.keys()
-    |> Enum.any?(fn field_change -> field_change == Atom.to_string(field_name) end)
+
+  defp position_change_requested?(%{params: nil}, _field_name), do: false
+
+  defp position_change_requested?(%{params: params} = _changeset, field_name) do
+    Map.has_key?(params, Atom.to_string(field_name))
   end
 end
