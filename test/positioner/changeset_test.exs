@@ -271,6 +271,59 @@ defmodule Positioner.ChangesetTest do
                %{id: ^dummy_2, title: "subject", position: 4, tenant_id: ^another_tenant_id}
              ] = all_dummies!()
     end
+
+    test "updated programatically" do
+      tenant = insert_tenant!()
+
+      %{id: dummy_1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
+      %{id: dummy_2} = subject = insert_dummy!(title: "2", position: 2, tenant: tenant)
+      %{id: dummy_3} = insert_dummy!(title: "3", position: 3, tenant: tenant)
+      %{id: dummy_4} = insert_dummy!(title: "4", position: 4, tenant: tenant)
+
+      assert %{id: ^dummy_2, position: 3} =
+               subject
+               |> Ecto.Changeset.change(position: 3)
+               |> Positioner.Changeset.set_order(:position, [:tenant_id])
+               |> Repo.update!()
+
+      assert [
+               %{id: ^dummy_1, title: "1", position: 1},
+               %{id: ^dummy_3, title: "3", position: 2},
+               %{id: ^dummy_2, title: "2", position: 3},
+               %{id: ^dummy_4, title: "4", position: 4}
+             ] = all_dummies!()
+    end
+
+    test "params are not strings" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+      %{id: another_tenant_id} = another_tenant = insert_tenant!()
+
+      %{id: dummy_1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
+      %{id: dummy_2} = subject = insert_dummy!(title: "2", position: 2, tenant: tenant)
+      %{id: dummy_3} = insert_dummy!(title: "3", position: 3, tenant: tenant)
+
+      %{id: another_dummy_1} = insert_dummy!(title: "1", position: 1, tenant: another_tenant)
+      %{id: another_dummy_2} = insert_dummy!(title: "2", position: 2, tenant: another_tenant)
+      %{id: another_dummy_3} = insert_dummy!(title: "3", position: 3, tenant: another_tenant)
+
+      assert %{id: ^dummy_2, title: "subject", position: 2, tenant_id: ^another_tenant_id} =
+               subject
+               |> Dummy.update_changeset(tenant, %{
+                 title: "subject",
+                 position: 2,
+                 tenant_id: another_tenant_id
+               })
+               |> Repo.update!()
+
+      assert [
+               %{id: ^dummy_1, title: "1", position: 1, tenant_id: ^tenant_id},
+               %{id: ^dummy_3, title: "3", position: 2, tenant_id: ^tenant_id},
+               %{id: ^another_dummy_1, title: "1", position: 1, tenant_id: ^another_tenant_id},
+               %{id: ^dummy_2, title: "subject", position: 2, tenant_id: ^another_tenant_id},
+               %{id: ^another_dummy_2, title: "2", position: 3, tenant_id: ^another_tenant_id},
+               %{id: ^another_dummy_3, title: "3", position: 4, tenant_id: ^another_tenant_id}
+             ] = all_dummies!()
+    end
   end
 
   describe "Deleting record" do
