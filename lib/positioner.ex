@@ -1,19 +1,46 @@
 defmodule Positioner do
   import Ecto.Query
 
+  @moduledoc """
+  Lower level API for keeping your collection ordered.
+
+  It provides a set of functions that will reorder the collection as if the operation
+  you are going to perform (insert/update/delete) was already performed.
+
+  This means that this module will make sure to make a vacant space for you new records
+  at the position you want it to, or will remove any holes in ordering due to moving and
+  deleting records.
+
+  In addition it provides a function to reorder your whole collection which comes in hand
+  with drag and drop
+
+  If your collection gets out of sync you can use `refresh_order!/3` to reorder it again
+  """
+
+  @typedoc "Database primary key"
+  @type id :: integer()
+  @typedoc "Module with Ecto.Schema to be ordered"
+  @type model :: module()
+  @typedoc "List of keys shared by the collection"
+  @type scopes :: keyword({atom(), any()})
+  @typedoc "Name of the field that holds the position"
+  @type position_field :: atom()
+  @typedoc "Position value"
+  @type position :: integer()
+
   @doc """
   Calculates the position for new record in a given scope.
   It's either 1 if there are no records or end of the scope.
 
   Example:
-      iex> Positioner.positioner_for_new(Dummy, [tenant_id: tenant_id], :position)
+      iex> Positioner.position_for_new(Dummy, [tenant_id: tenant_id], :position)
       1
-      iex> Positioner.positioner_for_new(Dummy, [tenant_id: tenant_id], :position)
+      iex> Positioner.position_for_new(Dummy, [tenant_id: tenant_id], :position)
       2
-      iex> Positioner.positioner_for_new(Dummy, [tenant_id: another_tenant_id], :position)
+      iex> Positioner.position_for_new(Dummy, [tenant_id: another_tenant_id], :position)
       1
   """
-  @spec position_for_new(Ecto.Schema.t(), keyword(), atom()) :: integer()
+  @spec position_for_new(model(), scopes(), position_field()) :: position()
   def position_for_new(schema_module, scopes \\ [], field_name \\ :position) do
     schema_module
     |> from(as: :source)
@@ -26,7 +53,21 @@ defmodule Positioner do
     end
   end
 
-  @spec insert_at(Ecto.Schema.t(), keyword(), atom(), integer()) :: :ok
+  @doc """
+  Spreads the records in collection as if new record at `position` was inserted, making it safe to insert a new record
+
+  Example:
+      # Assume records:
+      #  %Dummy{id: 1, tenant_id: 1, position: 1}
+      #  %Dummy{id: 2, tenant_id: 1, position: 2}
+      #  %Dummy{id: 3, tenant_id: 1, position: 3}
+      iex> Positioner.insert_at(Dummy, [tenant_id: 1], :position, 2)
+      :ok
+      #  %Dummy{id: 1, tenant_id: 1, position: 1}
+      #  %Dummy{id: 2, tenant_id: 1, position: 3}
+      #  %Dummy{id: 3, tenant_id: 1, position: 4}
+  """
+  @spec insert_at(model(), scopes(), position_field(), position()) :: :ok
   def insert_at(schema_module, scopes \\ [], field_name \\ :position, position)
       when is_atom(field_name) and is_integer(position) do
     # Step 1:
@@ -47,7 +88,24 @@ defmodule Positioner do
     :ok
   end
 
-  @spec update_to(Ecto.Schema.t(), keyword(), atom(), integer(), integer()) :: :ok
+  @doc """
+  Adjusts collection as if the record with `id` was moved to a different position,
+  making it safe to update the record
+
+  Example:
+      # Assume records:
+      #  %Dummy{id: 1, tenant_id: 1, position: 1}
+      #  %Dummy{id: 2, tenant_id: 1, position: 2}
+      #  %Dummy{id: 3, tenant_id: 1, position: 3}
+      #  %Dummy{id: 4, tenant_id: 1, position: 4}
+      iex> Positioner.insert_at(Dummy, [tenant_id: 1], :position, 2, 3, 2)
+      :ok
+      #  %Dummy{id: 1, tenant_id: 1, position: 1}
+      #  %Dummy{id: 2, tenant_id: 1, position: 2}
+      #  %Dummy{id: 3, tenant_id: 1, position: 2}
+      #  %Dummy{id: 4, tenant_id: 1, position: 4}
+  """
+  @spec update_to(model(), scopes(), position_field(), position(), position(), id()) :: :ok
   def update_to(
         schema_module,
         scopes \\ [],
@@ -102,6 +160,21 @@ defmodule Positioner do
     :ok
   end
 
+  @doc """
+  Readjusts collection fields as if record with `id` was deleted, making it safe to delete.
+
+  Example:
+      # Assume records:
+      #  %Dummy{id: 1, tenant_id: 1, position: 1}
+      #  %Dummy{id: 2, tenant_id: 1, position: 2}
+      #  %Dummy{id: 3, tenant_id: 1, position: 3}
+      iex> Positioner.delete(Dummy, [tenant_id: 1], :position, 2)
+      :ok
+      #  %Dummy{id: 1, tenant_id: 1, position: 1}
+      #  %Dummy{id: 2, tenant_id: 1, position: 2}
+      #  %Dummy{id: 3, tenant_id: 1, position: 2}
+  """
+  @spec delete(model(), scopes(), position_field(), id()) :: :ok
   def delete(schema_module, scopes \\ [], field_name \\ :position, id)
       when is_atom(field_name) and is_integer(id) do
     # Step 1:
@@ -119,6 +192,27 @@ defmodule Positioner do
     :ok
   end
 
+  @doc """
+  Reorders the collection according to the order in `ids` argument list.
+
+  Records that belong to collection but were not passed to the list will be moved
+  to the end of the collection keeping their current order
+
+
+  Example:
+      # Assume records:
+      #  %Dummy{id: 1, tenant_id: 1, position: 1}
+      #  %Dummy{id: 2, tenant_id: 1, position: 2}
+      #  %Dummy{id: 3, tenant_id: 1, position: 3}
+      #  %Dummy{id: 4, tenant_id: 1, position: 4}
+      iex> Positioner.update_positions(Dummy, [tenant_id: 1], :position, [4, 3])
+      :ok
+      #  %Dummy{id: 1, tenant_id: 1, position: 3}
+      #  %Dummy{id: 2, tenant_id: 1, position: 4}
+      #  %Dummy{id: 3, tenant_id: 1, position: 2}
+      #  %Dummy{id: 4, tenant_id: 1, position: 1}
+  """
+  @spec update_positions!(model(), scopes(), position_field(), list(id())) :: :ok
   def update_positions!(schema_module, scopes \\ [], field_name \\ :position, ids)
       when is_list(ids) and is_atom(field_name) do
     all_records = all_records_query(schema_module, scopes, field_name)
@@ -142,7 +236,25 @@ defmodule Positioner do
     :ok
   end
 
-  @spec refresh_order!(module(), Keyword.t(), atom()) :: :ok
+  @doc """
+  Reorders the record that might have lost its ordering.
+  Will remove holes in ordering. On conflict, records with the same position
+  will be ordered according to their `updated_at` and `id`  columns
+
+  Example:
+      # Assume records:
+      #  %Dummy{id: 1, tenant_id: 1, position: 1}
+      #  %Dummy{id: 2, tenant_id: 1, position: 2}
+      #  %Dummy{id: 3, tenant_id: 1, position: 6}
+      #  %Dummy{id: 4, tenant_id: 1, position: 6}
+      iex> Positioner.update_positions(Dummy, [tenant_id: 1], :position, [4, 3])
+      :ok
+      #  %Dummy{id: 1, tenant_id: 1, position: 1}
+      #  %Dummy{id: 2, tenant_id: 1, position: 2}
+      #  %Dummy{id: 3, tenant_id: 1, position: 3}
+      #  %Dummy{id: 4, tenant_id: 1, position: 4}
+  """
+  @spec refresh_order!(model(), scopes(), position_field()) :: :ok
   def refresh_order!(schema_module, scopes \\ [], field_name \\ :position) do
     all_records = all_records_query(schema_module, scopes, field_name)
     ordered_query = ordered_query(all_records)
@@ -227,7 +339,7 @@ defmodule Positioner do
     |> update([source: s, ordering: o], set: [{^field_name, o.expected_position}])
   end
 
-  def final_without_query(schema_module, ordered_query, field_name, id) do
+  defp final_without_query(schema_module, ordered_query, field_name, id) do
     schema_module
     |> final_query(ordered_query, field_name)
     |> where([source: s], s.id != ^id)

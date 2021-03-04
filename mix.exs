@@ -4,12 +4,13 @@ defmodule Positioner.MixProject do
   def project do
     [
       app: :positioner,
-      version: "0.1.3",
+      version: "0.1.4",
       elixir: "~> 1.10",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      aliases: aliases()
+      aliases: aliases(),
+      docs: docs()
     ]
   end
 
@@ -24,14 +25,31 @@ defmodule Positioner.MixProject do
   defp deps do
     [
       {:ecto_sql, "~> 3.0"},
-      {:postgrex, ">= 0.0.0"}
+      {:postgrex, ">= 0.0.0"},
+      {:ex_doc, "~> 0.23", only: :dev, runtime: false}
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      extras: ["README.md": [filename: "readme", title: "README"]]
     ]
   end
 
   defp aliases do
     [
-      test: ["ecto.create", "ecto.migrate", "test"]
+      test: ["ecto.create", "ecto.migrate", "test"],
+      docs: ["docs", &copy_images/1]
     ]
+  end
+
+  defp copy_images(_) do
+    File.mkdir("./doc/assets/")
+
+    "./assets/*.png"
+    |> Path.wildcard()
+    |> Enum.each(&File.cp!(&1, "./doc/assets/#{Path.basename(&1)}"))
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

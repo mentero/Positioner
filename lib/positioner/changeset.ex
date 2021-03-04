@@ -1,7 +1,38 @@
 defmodule Positioner.Changeset do
   import Ecto.Changeset
 
-  @spec set_order(Ecto.Changeset.t(), atom(), list(atom()) | atom()) :: Ecto.Changeset.t()
+  @moduledoc """
+  Defines an easy to use helper that will figure out which functions
+  from lower-level API need to be called in order to make an action
+  represented by changeset compatible with collection order.
+
+  Beware of bulk actions!
+  This helper will run a SQL query to adjust a collection
+  every time the changeset is run by Repo.
+  This mean that if you want to for ex. add multiple records,
+  create a changeset for each of them and run `Repo.insert()` in
+  a loop, you will also run an additional SQL query to update the
+  collection for each `Repo.insert()` call.
+  """
+
+  @typedoc "Name of the column that identifies a collection"
+  @type scope :: atom()
+  @typedoc "Name of the field that should keep the ordering"
+  @type position_field :: atom()
+
+  @doc """
+  Will reorder the collection by calling additional SQL query
+  before executing changeset action on a Repo.
+
+  Example:
+      iex> %Dummy{} \\
+      iex> |> change(tenant_id: 1) \\
+      iex> |> Positioner.Changeset.set_order(:position, [:tenant_id]) \\
+      iex> |> Repo.insert()
+      %Dummy{id: 1, position: 1, tenant_id: 1}
+  """
+  @spec set_order(Ecto.Changeset.t(), position_field(), list(scope) | scope) ::
+          Ecto.Changeset.t()
   def set_order(changeset, field_name \\ :position, scopes \\ [])
 
   def set_order(changeset, field_name, scopes) when not is_list(scopes) do
