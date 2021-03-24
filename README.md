@@ -10,7 +10,7 @@ Add `positioner` to your `mix.exs`
 ```elixir
 def deps do
   [
-    {:positioner, "~> 0.1.4"}
+    {:positioner, "~> 0.2.0"}
   ]
 end
 ```
