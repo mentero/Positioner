@@ -122,6 +122,29 @@ defmodule PositionerTest do
                %{id: ^d4, position: 4, idx: 5}
              ] = all_dummies!()
     end
+
+    @tag big: true, timeout: :infinity
+    test "with lots of records" do
+      %{id: tenant_a_id} = insert_tenant!()
+
+      sql = """
+      INSERT INTO dummies (id, position, tenant_id, inserted_at, updated_at)
+      SELECT (s.id + $2 * 250000) AS id, s.id AS position, $1 as tenant_id, NOW() as inserted_at, NOW() as updated_at
+      FROM generate_series(1,250000) AS s(id)
+      """
+
+      Logger.configure(level: :debug)
+
+      Positioner.Repo.query!(sql, [tenant_a_id, 0])
+
+      for i <- 1..5 do
+        %{id: tenant_id} = insert_tenant!()
+        Positioner.Repo.query!(sql, [tenant_id, i])
+      end
+
+      assert Positioner.insert_at(Dummy, [tenant_id: tenant_a_id], :position, 220_000)
+      Logger.configure(level: :warn)
+    end
   end
 
   describe "update_to" do

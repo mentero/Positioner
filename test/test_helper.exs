@@ -1,3 +1,4 @@
+ExUnit.configure(exclude: :big)
 ExUnit.start()
 
 Positioner.Repo.start_link()

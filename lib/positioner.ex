@@ -300,6 +300,7 @@ defmodule Positioner do
   defp fake_record_query(schema_module, position) when is_integer(position) do
     schema_module
     |> from(as: :source)
+    |> limit(1)
     |> select(%{
       id: fragment(~s[? as "id"], 0),
       position: fragment(~s[? as "position"], ^position),
@@ -332,10 +333,9 @@ defmodule Positioner do
     schema_module
     |> from(as: :source)
     |> join(:inner, [source: s], o in subquery(ordered_query),
-      on: s.id == o.id and o.id != 0,
+      on: s.id == o.id and o.id != 0 and o.current_position != o.expected_position,
       as: :ordering
     )
-    |> where([source: s, ordering: o], o.current_position != o.expected_position)
     |> update([source: s, ordering: o], set: [{^field_name, o.expected_position}])
   end
 
