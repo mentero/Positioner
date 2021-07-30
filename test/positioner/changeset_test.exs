@@ -127,7 +127,7 @@ defmodule Positioner.ChangesetTest do
   end
 
   describe "Updating record position" do
-    test "have no effect if it didn't change" do
+    test "has no effect if it didn't change" do
       tenant = insert_tenant!()
 
       %{id: dummy_1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
@@ -322,6 +322,52 @@ defmodule Positioner.ChangesetTest do
                %{id: ^dummy_2, title: "subject", position: 2, tenant_id: ^another_tenant_id},
                %{id: ^another_dummy_2, title: "2", position: 3, tenant_id: ^another_tenant_id},
                %{id: ^another_dummy_3, title: "3", position: 4, tenant_id: ^another_tenant_id}
+             ] = all_dummies!()
+    end
+
+    test "requested position is the same as current one" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: dummy_1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
+      %{id: dummy_2} = subject = insert_dummy!(title: "2", position: 2, tenant: tenant)
+      %{id: dummy_3} = insert_dummy!(title: "3", position: 3, tenant: tenant)
+
+      assert %{id: ^dummy_2, title: "subject", position: 2, tenant_id: ^tenant_id} =
+               subject
+               |> Dummy.update_changeset(tenant, %{
+                 title: "subject",
+                 position: 2,
+                 tenant_id: tenant_id
+               })
+               |> Repo.update!()
+
+      assert [
+               %{id: ^dummy_1, title: "1", position: 1, tenant_id: ^tenant_id},
+               %{id: ^dummy_2, title: "subject", position: 2, tenant_id: ^tenant_id},
+               %{id: ^dummy_3, title: "3", position: 3, tenant_id: ^tenant_id}
+             ] = all_dummies!()
+    end
+
+    test "requested to be put at the end of the scope" do
+      %{id: tenant_id} = tenant = insert_tenant!()
+
+      %{id: dummy_1} = insert_dummy!(title: "1", position: 1, tenant: tenant)
+      %{id: dummy_2} = subject = insert_dummy!(title: "2", position: 2, tenant: tenant)
+      %{id: dummy_3} = insert_dummy!(title: "3", position: 3, tenant: tenant)
+
+      assert %{id: ^dummy_2, title: "subject", position: 3, tenant_id: ^tenant_id} =
+               subject
+               |> Dummy.update_changeset(tenant, %{
+                 title: "subject",
+                 position: nil,
+                 tenant_id: tenant_id
+               })
+               |> Repo.update!()
+
+      assert [
+               %{id: ^dummy_1, title: "1", position: 1, tenant_id: ^tenant_id},
+               %{id: ^dummy_3, title: "3", position: 2, tenant_id: ^tenant_id},
+               %{id: ^dummy_2, title: "subject", position: 3, tenant_id: ^tenant_id}
              ] = all_dummies!()
     end
   end

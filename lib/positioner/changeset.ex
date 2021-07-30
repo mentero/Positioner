@@ -91,7 +91,8 @@ defmodule Positioner.Changeset do
     given_position = fetch_field!(changeset, field_name)
 
     position =
-      if position_changed?(changeset, field_name) and given_position < max_position do
+      if (position_changed?(changeset, field_name) or
+            position_change_requested?(changeset, field_name)) and given_position < max_position do
         given_position
       else
         max_position
@@ -144,8 +145,8 @@ defmodule Positioner.Changeset do
     Enum.any?(scopes, &get_change(changeset, &1))
   end
 
-  defp position_changed?(%{changes: changes} = changeset, field_name) do
-    Map.has_key?(changes, field_name) or position_change_requested?(changeset, field_name)
+  defp position_changed?(%{changes: changes} = _changeset, field_name) do
+    Map.has_key?(changes, field_name)
   end
 
   # Handles an edge case where we change the scope but Ecto does not mark position
