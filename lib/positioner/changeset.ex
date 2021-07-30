@@ -149,10 +149,6 @@ defmodule Positioner.Changeset do
     Map.has_key?(changes, field_name)
   end
 
-  # Handles an edge case where we change the scope but Ecto does not mark position
-  # as changed because it occupies the same position in new scope.
-  # From a row point of view it didn't change, but from a collection point of view it did.
-
   defp position_change_requested?(%{params: nil}, _field_name), do: false
 
   defp position_change_requested?(%{params: params} = _changeset, field_name) do
