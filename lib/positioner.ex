@@ -73,7 +73,7 @@ defmodule Positioner do
     # Step 1:
     # Create a query of all current records + a fake records at given position
     all_records = all_records_query(schema_module, scopes, field_name)
-    fake_new_record = fake_record_query(schema_module, position)
+    fake_new_record = fake_record_query(position)
     fake_table = union(all_records, ^fake_new_record)
 
     # Step 2:
@@ -145,7 +145,8 @@ defmodule Positioner do
 
     # Step 3:
     # Get a table of all records without updated one and simulate new fake record at updated position
-    fake_record_query = fake_record_query(schema_module, new_position)
+    fake_record_query = fake_record_query(new_position)
+
     fake_table = union(all_records, ^fake_record_query)
 
     # Step 4:
@@ -155,6 +156,7 @@ defmodule Positioner do
     # Step 5:
     # Update all records that have different position than the one in ordered fake table
     final_query = final_without_query(schema_module, ordering_query, field_name, id)
+
     Positioner.Config.repo().update_all(final_query, [])
 
     :ok
@@ -297,15 +299,16 @@ defmodule Positioner do
     |> where([source: s], s.id != ^id)
   end
 
-  defp fake_record_query(schema_module, position) when is_integer(position) do
-    schema_module
-    |> from(as: :source)
-    |> limit(1)
-    |> select(%{
-      id: fragment(~s[? as "id"], 0),
-      position: fragment(~s[? as "position"], ^position),
-      updated_at: fragment(~s[NOW() + INTERVAL '1 day' as "updated_at"])
-    })
+  defp fake_record_query(position) when is_integer(position) do
+    "fake"
+    |> with_cte("fake",
+      as:
+        fragment(
+          ~s[SELECT 0 as "id", ?::integer as "position", NOW() + INTERVAL '1 day' as "updated_at"],
+          ^position
+        )
+    )
+    |> select([fake], %{id: fake.id, position: fake.position, updated_at: fake.updated_at})
   end
 
   defp ordered_query(fake_table) do
